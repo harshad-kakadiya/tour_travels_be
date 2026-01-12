@@ -5,6 +5,9 @@ const Category = require("../models/Category");
 const User = require("../models/User");
 const { uploadBlogImage, deleteImageFromCloudinary } = require("../utils/upload");
 
+// ------------------------
+// Slug Generator
+// ------------------------
 const createSlug = (value = "") => {
     const normalized = value
         .toString()
@@ -21,62 +24,64 @@ const createSlug = (value = "") => {
 // ------------------------
 const createBlog = async (req, res) => {
     try {
-        // Debug: Log the request body and file
-        console.log("Request body:", req.body);
-        console.log("Request file:", req.file);
+        const { 
+            title, 
+            content, 
+            readTime, 
+            category, 
+            slug,
+            metaTitle,
+            metaDescription,
+            publishedDate // ✅ ADDED
+        } = req.body;
 
-        // Get data from form-data
-        const { title, content, readTime, category, slug,metaTitle,metaDescription } = req.body;
-        
-        // Get image URL from uploaded file or from body (if URL provided)
+        // Image handling
         let blogImage;
         if (req.file) {
-            // Upload file to Cloudinary
             try {
                 blogImage = await uploadBlogImage(req.file.buffer);
-                console.log("Image uploaded to Cloudinary:", blogImage);
-            } catch (uploadError) {
-                return res.status(500).json({ 
-                    success: false, 
-                    message: "Error uploading image to Cloudinary", 
-                    error: uploadError.message 
+            } catch (error) {
+                return res.status(500).json({
+                    success: false,
+                    message: "Error uploading image",
+                    error: error.message
                 });
             }
         } else {
-            blogImage = req.body.blogImage; // If image URL is provided in form data
+            blogImage = req.body.blogImage;
         }
 
         // Validation
         if (!title || !content || !readTime || !category) {
-            return res.status(400).json({ 
-                success: false, 
-                message: "Title, content, readTime, and category are required",
-                received: { title, content, readTime, category }
+            return res.status(400).json({
+                success: false,
+                message: "Title, content, readTime, and category are required"
             });
         }
 
         if (!blogImage) {
-            return res.status(400).json({ 
-                success: false, 
-                message: "Blog image is required. Please upload an image file or provide image URL" 
+            return res.status(400).json({
+                success: false,
+                message: "Blog image is required"
             });
         }
 
-        // Check if category exists
+        // Category check
         const categoryExists = await Category.findById(category);
         if (!categoryExists) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Category not found" 
+            return res.status(404).json({
+                success: false,
+                message: "Category not found"
             });
         }
 
+        // Slug check
         const normalizedSlug = createSlug(slug || title);
         const slugExists = await Blog.findOne({ slug: normalizedSlug });
         if (slugExists) {
             return res.status(409).json({
                 success: false,
-                message: "Slug already in use. Please provide a unique slug."
+                message: "Slug already exists"
             });
         }
 
@@ -89,21 +94,22 @@ const createBlog = async (req, res) => {
             slug: normalizedSlug,
             metaTitle,
             metaDescription,
+            publishedDate: publishedDate || new Date() // ✅ ADDED
         });
 
         await blog.save();
-        await blog.populate('category', 'title');
+        await blog.populate("category", "title");
 
-        res.status(201).json({ 
-            success: true, 
-            message: "Blog created successfully", 
-            data: blog 
+        res.status(201).json({
+            success: true,
+            message: "Blog created successfully",
+            data: blog
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error creating blog", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error creating blog",
+            error: error.message
         });
     }
 };
@@ -113,21 +119,21 @@ const createBlog = async (req, res) => {
 // ------------------------
 const getBlogs = async (req, res) => {
     try {
-        const { 
-            page = 1, 
-            limit = 10, 
-            category, 
+        const {
+            page = 1,
+            limit = 10,
+            category,
             search,
-            sortBy = "createdAt",
+            sortBy = "publishedDate",
             sortOrder = "desc"
         } = req.query;
 
-        // Build filter object
-        const filter = {};
-        
+        const filter = {
+            publishedDate: { $lte: new Date() } // ✅ Only published blogs
+        };
+
         if (category) filter.category = category;
-        
-        // Search functionality
+
         if (search) {
             filter.$or = [
                 { title: { $regex: search, $options: "i" } },
@@ -135,12 +141,11 @@ const getBlogs = async (req, res) => {
             ];
         }
 
-        // Sort object
         const sort = {};
         sort[sortBy] = sortOrder === "desc" ? -1 : 1;
 
         const blogs = await Blog.find(filter)
-            .populate('category', 'title')
+            .populate("category", "title")
             .sort(sort)
             .limit(limit * 1)
             .skip((page - 1) * limit);
@@ -151,7 +156,7 @@ const getBlogs = async (req, res) => {
             success: true,
             data: blogs,
             pagination: {
-                currentPage: parseInt(page),
+                currentPage: Number(page),
                 totalPages: Math.ceil(total / limit),
                 totalBlogs: total,
                 hasNext: page < Math.ceil(total / limit),
@@ -159,16 +164,16 @@ const getBlogs = async (req, res) => {
             }
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error fetching blogs", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error fetching blogs",
+            error: error.message
         });
     }
 };
 
 // ------------------------
-// Get Blog by ID
+// Get Blog by ID or Slug
 // ------------------------
 const getBlogById = async (req, res) => {
     try {
@@ -184,21 +189,21 @@ const getBlogById = async (req, res) => {
         }
 
         if (!blog) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Blog not found" 
+            return res.status(404).json({
+                success: false,
+                message: "Blog not found"
             });
         }
 
-        res.status(200).json({ 
-            success: true, 
-            data: blog 
+        res.status(200).json({
+            success: true,
+            data: blog
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error fetching blog", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error fetching blog",
+            error: error.message
         });
     }
 };
@@ -209,62 +214,55 @@ const getBlogById = async (req, res) => {
 const getBlogBySlug = async (req, res) => {
     try {
         const blog = await Blog.findOne({ slug: req.params.slug })
-            .populate('category', 'title');
+            .populate("category", "title");
 
         if (!blog) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Blog not found" 
+            return res.status(404).json({
+                success: false,
+                message: "Blog not found"
             });
         }
 
-        res.status(200).json({ 
-            success: true, 
-            data: blog 
+        res.status(200).json({
+            success: true,
+            data: blog
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error fetching blog by slug", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error fetching blog",
+            error: error.message
         });
     }
 };
-
 
 // ------------------------
 // Update Blog
 // ------------------------
 const updateBlog = async (req, res) => {
     try {
-        // Get data from form-data
-        const { title, content, readTime, category, slug } = req.body;
-        
-        // Get image URL from uploaded file or from body (if URL provided)
+        const { 
+            title, 
+            content, 
+            readTime, 
+            category, 
+            slug,
+            publishedDate // ✅ ADDED
+        } = req.body;
+
         let blogImage;
         if (req.file) {
-            // Upload file to Cloudinary
-            try {
-                blogImage = await uploadBlogImage(req.file.buffer);
-                console.log("Image uploaded to Cloudinary:", blogImage);
-            } catch (uploadError) {
-                return res.status(500).json({ 
-                    success: false, 
-                    message: "Error uploading image to Cloudinary", 
-                    error: uploadError.message 
-                });
-            }
+            blogImage = await uploadBlogImage(req.file.buffer);
         } else {
-            blogImage = req.body.blogImage; // If image URL is provided in form data
+            blogImage = req.body.blogImage;
         }
 
-        // Check if category exists (if provided)
         if (category) {
             const categoryExists = await Category.findById(category);
             if (!categoryExists) {
-                return res.status(404).json({ 
-                    success: false, 
-                    message: "Category not found" 
+                return res.status(404).json({
+                    success: false,
+                    message: "Category not found"
                 });
             }
         }
@@ -275,10 +273,11 @@ const updateBlog = async (req, res) => {
         if (blogImage) updateData.blogImage = blogImage;
         if (readTime) updateData.readTime = readTime;
         if (category) updateData.category = category;
+        if (publishedDate) updateData.publishedDate = publishedDate; // ✅ ADDED
 
         if (slug) {
             const normalizedSlug = createSlug(slug);
-            const slugExists = await Blog.findOne({ 
+            const slugExists = await Blog.findOne({
                 slug: normalizedSlug,
                 _id: { $ne: req.params.id }
             });
@@ -286,37 +285,36 @@ const updateBlog = async (req, res) => {
             if (slugExists) {
                 return res.status(409).json({
                     success: false,
-                    message: "Slug already in use. Please provide a unique slug."
+                    message: "Slug already exists"
                 });
             }
+
             updateData.slug = normalizedSlug;
-        } else if (title && !slug) {
-            // If title is updated but slug is not provided, keep existing slug.
         }
 
         const blog = await Blog.findByIdAndUpdate(
             req.params.id,
             updateData,
             { new: true, runValidators: true }
-        ).populate('category', 'title');
+        ).populate("category", "title");
 
         if (!blog) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Blog not found" 
+            return res.status(404).json({
+                success: false,
+                message: "Blog not found"
             });
         }
 
-        res.status(200).json({ 
-            success: true, 
-            message: "Blog updated successfully", 
-            data: blog 
+        res.status(200).json({
+            success: true,
+            message: "Blog updated successfully",
+            data: blog
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error updating blog", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error updating blog",
+            error: error.message
         });
     }
 };
@@ -329,35 +327,27 @@ const deleteBlog = async (req, res) => {
         const blog = await Blog.findById(req.params.id);
 
         if (!blog) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Blog not found" 
+            return res.status(404).json({
+                success: false,
+                message: "Blog not found"
             });
         }
 
-        // Delete image from Cloudinary if it's a Cloudinary URL
-        if (blog.blogImage && blog.blogImage.includes('cloudinary.com')) {
-            try {
-                await deleteImageFromCloudinary(blog.blogImage);
-                console.log("Image deleted from Cloudinary:", blog.blogImage);
-            } catch (deleteError) {
-                console.error("Error deleting image from Cloudinary:", deleteError);
-                // Continue with blog deletion even if image deletion fails
-            }
+        if (blog.blogImage?.includes("cloudinary.com")) {
+            await deleteImageFromCloudinary(blog.blogImage);
         }
 
-        // Delete the blog from database
         await Blog.findByIdAndDelete(req.params.id);
 
-        res.status(200).json({ 
-            success: true, 
-            message: "Blog deleted successfully" 
+        res.status(200).json({
+            success: true,
+            message: "Blog deleted successfully"
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error deleting blog", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error deleting blog",
+            error: error.message
         });
     }
 };
@@ -370,39 +360,41 @@ const getBlogsByCategory = async (req, res) => {
         const { categoryId } = req.params;
         const { page = 1, limit = 10 } = req.query;
 
-        const blogs = await Blog.find({ 
-            category: categoryId
+        const blogs = await Blog.find({
+            category: categoryId,
+            publishedDate: { $lte: new Date() } // ✅ ADDED
         })
-            .populate('category', 'title')
-            .sort({ createdAt: -1 })
+            .populate("category", "title")
+            .sort({ publishedDate: -1 })
             .limit(limit * 1)
             .skip((page - 1) * limit);
 
-        const total = await Blog.countDocuments({ 
-            category: categoryId
+        const total = await Blog.countDocuments({
+            category: categoryId,
+            publishedDate: { $lte: new Date() }
         });
 
         res.status(200).json({
             success: true,
             data: blogs,
             pagination: {
-                currentPage: parseInt(page),
+                currentPage: Number(page),
                 totalPages: Math.ceil(total / limit),
-                totalBlogs: total,
-                hasNext: page < Math.ceil(total / limit),
-                hasPrev: page > 1
+                totalBlogs: total
             }
         });
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            message: "Error fetching blogs by category", 
-            error: error.message 
+        res.status(500).json({
+            success: false,
+            message: "Error fetching blogs by category",
+            error: error.message
         });
     }
 };
 
-// Export all controllers
+// ------------------------
+// Export Controllers
+// ------------------------
 module.exports = {
     createBlog,
     getBlogs,
