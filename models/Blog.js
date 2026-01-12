@@ -44,6 +44,11 @@ const blogSchema = new mongoose.Schema(
             trim: true,
             maxlength: 200
         },
+          publishedDate: {
+            type: Date,
+            required: [true, "Published date is required"],
+            default: Date.now
+        },
         metaDescription: {
             type: String,
             required: [true, "Title is required"],
